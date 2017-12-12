@@ -2,33 +2,12 @@
 
 from asyncore import dispatcher
 from asynchat import async_chat
+from threading import Thread
 import socket, asyncore
 
-class EndSession(Exception):
-    pass
+from Room import *
 
-class CommandHandler:
-    def unknown(self, session, cmd):
-        session.push('Unknown command: %s\n'.encode('utf-8') % cmd)
 
-    def handle(self, session, line):
-        print(line)
-        if not line.strip():
-            return
-        parts = line.split(' ', 1)
-        cmd = parts[0]
-        try:
-            line = parts[1].strip()
-        except IndexError:
-            line = ''
-        print('do_' + cmd)
-        print(getattr(self, 'do_' + cmd, None))
-        method = getattr(self, 'do_' + cmd, None)
-        try:
-            method(session, line)
-        except TypeError:
-            self.unknown(session, cmd)
-            
 class Channel(CommandHandler):
     def __init__(self, server):
         self.server = server
@@ -41,8 +20,7 @@ class Channel(CommandHandler):
         self.sessions.remove(session)    
     
     def do_logout(self, session, line):
-        raise EndSession
-
+        raise EndSession 
 
 
 class LoginChannel(Channel):
@@ -71,8 +49,18 @@ class ListChannel(Channel):
     def do_list_users(self, session, line):
         users = b' '.join(self.server.users.keys())
         session.push(users)
-        
-        
+    
+    def do_chat(self, session, chat_with):
+        chat_users = tuple(set(chat_with.split(' ')))
+        if chat_users in self.server.rooms.keys():
+            session.push(str(self.server.rooms[chat_users].port).encode("utf-8"))
+        else:
+            port = self.server.base_port + self.server.room_count
+            self.server.room_count += 1
+            self.server.rooms[chat_users] = RoomServer(self.server, port, chat_users)
+            session.push(str(port).encode("utf-8"))
+            
+
 class LogoutChannel(Channel):
     def add_session(self, session):
         try:
@@ -99,7 +87,7 @@ class ChatSession(async_chat):
             cur.remove_session(self)
         self.channel = channel
         channel.add_session(self)
-
+    
     def collect_incoming_data(self, data):
         self.ibuffer.append(data)
 
@@ -122,18 +110,25 @@ class ChatServer(dispatcher):
     def __init__(self, port):
         dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.set_reuse_addr()
+        # self.set_reuse_addr()
         self.bind(('', port))
         self.listen(5)
         self.users = {}
         self.main_channel = ListChannel(self)
+        self.rooms = {}
+        self.base_port = 40000
+        self.room_count = 0
 
     def handle_accept(self):
         conn, addr = self.accept()
+        print(conn)
         ChatSession(self, conn)
+
 
 if __name__ == '__main__':
     s = ChatServer(6666)
+    #a = Thread(target=asyncore.loop)
+    #a.start()
     try:
         asyncore.loop()
     except KeyboardInterrupt:

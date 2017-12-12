@@ -10,7 +10,24 @@ from wx.lib.pubsub import pub
 
 import wx
 
+
 CON = telnetlib.Telnet()
+
+
+def receive_users_list_thread():
+    pre_users = []
+    while 1:
+        CON.write(b'list_users\n')
+        users = CON.read_some().decode("utf-8").split(' ')
+        wx.CallAfter(pub.sendMessage, "LIST_USERS", users_list = users, pre_users_list = pre_users)
+        pre_users = users[:]
+        sleep(0.5)        
+        
+class ChatButton(wx.Button):
+    def __init__(self, parent, id, Label, user):
+        wx.Button.__init__(self, parent, id, Label)
+        self.owner = user
+
 
 class LoginFrame(wx.Frame):
     # login frame
@@ -46,7 +63,7 @@ class LoginFrame(wx.Frame):
             self.showDialog('名字被人用啦', (175, 50))
         elif response == b'Login Success':
             self.Close()
-            ListFrame(None, -1, user_name)
+            ListFrame(None, -1, user_name, server_address)
                 
 
     def showDialog(self, content, size):
@@ -58,10 +75,14 @@ class LoginFrame(wx.Frame):
 
 class ListFrame(wx.Frame):
     # list online user frame
-    def __init__(self, parent, id, user_name):
+    def __init__(self, parent, id, user_name, server_address):
         wx.Frame.__init__(self, parent, id)
         self.count_label = wx.StaticText(self, wx.ID_ANY, "在线用户：")
+        self.owner = user_name
+        self.user_name = user_name
         self.users = {}
+        self.cons = {}
+        self.server_address = server_address
         
         self.__set_properties()
         self.__do_layout()
@@ -74,7 +95,7 @@ class ListFrame(wx.Frame):
         self.Show()    
             
     def __set_properties(self):
-        self.SetTitle("小小聊天软件~\(≧▽≦)/~啦啦啦")
+        self.SetTitle(self.user_name + "  小小聊天软件~\(≧▽≦)/~啦啦啦")
         self.SetSize((300, 450))
         self.count_label.SetMinSize((300, 50))
         self.count_label.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Sans"))
@@ -93,11 +114,13 @@ class ListFrame(wx.Frame):
         del_users = set(pre_users_list).difference(users_list)
 
         for user in add_users:
-            self.users[user] = wx.StaticText(self, wx.ID_ANY, user), wx.Button(self, wx.ID_ANY, "与ta聊天")
+            
+            self.users[user] = wx.StaticText(self, wx.ID_ANY, user), ChatButton(self, wx.ID_ANY, "与ta聊天", user)
             self.users[user][0].SetMinSize((150, 40))
             self.users[user][0].SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.NORMAL, 0, "Noto Sans CJK SC"))
             self.users[user][1].SetMinSize((120, 40))
-            self.users[user][1].SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.NORMAL, 0, "Sans"))
+            self.users[user][1].SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.NORMAL, 0, "Sans"))    
+            self.users[user][1].Bind(wx.EVT_BUTTON, lambda evt, one=self.owner, two=user : self.chat(evt, one, two))
             self.count_sizer.Add(self.users[user][0])
             self.count_sizer.Add(self.users[user][1])
   
@@ -110,6 +133,21 @@ class ListFrame(wx.Frame):
             
         self.Layout()           
     
+    def chat(self, evt, one, two):
+        mess = 'chat %s %s\n' % (one, two)
+        CON.write(mess.encode('utf-8'))
+        response = CON.read_some()
+        self.cons[two] = telnetlib.Telnet()
+        self.cons[two].open(self.server_address[0], port = int(response.decode("utf-8")), timeout = 10)
+        print(int(response.decode("utf-8")))
+        response = self.cons[two].read_some()
+        
+        if response == b'Enter Success':
+            self.cons[two].write(b'check %s\n' % self.owner.encode("utf-8"))
+            response = self.cons[two].read_some()
+            if response == b'Check success':
+                ChatFrame(self, wx.ID_ANY, "Chat with %s" % two, self.cons[two])
+    
     def receive(self):
         while True:
             result = CON.read_some()
@@ -117,14 +155,66 @@ class ListFrame(wx.Frame):
             sleep(0.6)
 
 
-def receive_users_list_thread():
-    pre_users = []
-    while 1:
-        CON.write(b'list_users\n')
-        users = CON.read_some().decode("utf-8").split(' ')
-        wx.CallAfter(pub.sendMessage, "LIST_USERS", users_list = users, pre_users_list = pre_users)
-        pre_users = users[:]
-        sleep(0.5)        
+class ChatFrame(wx.Frame):
+    def __init__(self, parent, id, title, con):
+        wx.Frame.__init__(self, parent, id, title)
+        self.message_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE | wx.TE_READONLY)
+        self.sen_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE)
+        self.send_button = wx.Button(self, wx.ID_ANY, "发送信息")
+        self.mess_button = wx.Button(self, wx.ID_ANY, "聊天记录")
+        self.file_button = wx.Button(self, wx.ID_ANY, "传送文件")
         
-    
+        self.send_button.Bind(wx.EVT_BUTTON, self.send)
+        
+        self.con = con
+        
+        self.receive_thread = Thread(target=self.receive)
+        self.receive_thread.start()
+        
+        self.__set_properties()
+        self.__do_layout()
+        self.Show()
+        # self.receive()
 
+    def __set_properties(self):
+        self.SetSize((800, 530))
+        self.message_text_ctrl.SetMinSize((800, 300))
+        self.sen_text_ctrl.SetMinSize((800, 150))
+        self.send_button.SetMinSize((200, 45))
+        self.send_button.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.mess_button.SetMinSize((200, 45))
+        self.mess_button.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.file_button.SetMinSize((200, 45))
+        self.file_button.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.message_text_ctrl.SetFont(wx.Font(12, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.sen_text_ctrl.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+
+    def __do_layout(self):
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        buttoms_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        main_sizer.Add(self.message_text_ctrl, 0, 0, 0)
+        main_sizer.Add(self.sen_text_ctrl, 0, 0, 0)
+        buttoms_sizer.Add(self.send_button, 0, 0, 0)
+        buttoms_sizer.Add(self.mess_button, 0, 0, 0)
+        buttoms_sizer.Add(self.file_button, 0, 0, 0)
+        main_sizer.Add(buttoms_sizer, 1, 0, 0)
+        self.SetSizer(main_sizer)
+        self.Layout()
+    
+    def send(self, event):
+        print(self.con)
+        message = 'say ' + str(self.sen_text_ctrl.GetLineText(0)).strip() + '\n'
+        print(message)
+        if message:
+            self.con.write(message.encode("utf-8"))
+            self.sen_text_ctrl.Clear()
+            
+    def receive(self):
+        while True:
+            sleep(0.6)
+            result = self.con.read_very_eager()
+            if result != b'':
+                print(result.decode("utf-8"))
+                self.message_text_ctrl.AppendText(result)
+    
+    
