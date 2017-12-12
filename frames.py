@@ -21,7 +21,7 @@ def receive_users_list_thread():
         users = CON.read_some().decode("utf-8").split(' ')
         wx.CallAfter(pub.sendMessage, "LIST_USERS", users_list = users, pre_users_list = pre_users)
         pre_users = users[:]
-        sleep(0.5)        
+        sleep(100)        
         
 class ChatButton(wx.Button):
     def __init__(self, parent, id, Label, user):
@@ -146,7 +146,7 @@ class ListFrame(wx.Frame):
             self.cons[two].write(b'check %s\n' % self.owner.encode("utf-8"))
             response = self.cons[two].read_some()
             if response == b'Check success':
-                ChatFrame(self, wx.ID_ANY, "Chat with %s" % two, self.cons[two])
+                ChatFrame(self, wx.ID_ANY, "Chat with %s" % two, self.cons[two], two)
     
     def receive(self):
         while True:
@@ -156,7 +156,7 @@ class ListFrame(wx.Frame):
 
 
 class ChatFrame(wx.Frame):
-    def __init__(self, parent, id, title, con):
+    def __init__(self, parent, id, title, con, other):
         wx.Frame.__init__(self, parent, id, title)
         self.message_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE | wx.TE_READONLY)
         self.sen_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE)
@@ -165,8 +165,10 @@ class ChatFrame(wx.Frame):
         self.file_button = wx.Button(self, wx.ID_ANY, "传送文件")
         
         self.send_button.Bind(wx.EVT_BUTTON, self.send)
+        self.mess_button.Bind(wx.EVT_BUTTON, self.logs)
         
         self.con = con
+        self.other = other
         
         self.receive_thread = Thread(target=self.receive)
         self.receive_thread.start()
@@ -186,7 +188,7 @@ class ChatFrame(wx.Frame):
         self.mess_button.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
         self.file_button.SetMinSize((200, 45))
         self.file_button.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
-        self.message_text_ctrl.SetFont(wx.Font(12, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.message_text_ctrl.SetFont(wx.Font(16, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
         self.sen_text_ctrl.SetFont(wx.Font(20, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
 
     def __do_layout(self):
@@ -202,12 +204,15 @@ class ChatFrame(wx.Frame):
         self.Layout()
     
     def send(self, event):
-        print(self.con)
         message = 'say ' + str(self.sen_text_ctrl.GetLineText(0)).strip() + '\n'
-        print(message)
         if message:
             self.con.write(message.encode("utf-8"))
             self.sen_text_ctrl.Clear()
+    
+    def logs(self, event):
+        self.con.write(b'logs\n')
+        response = self.con.read_some()
+        LogsFrame(self, wx.ID_ANY, "chat logs with %s" % self.other, response)
             
     def receive(self):
         while True:
@@ -216,5 +221,14 @@ class ChatFrame(wx.Frame):
             if result != b'':
                 print(result.decode("utf-8"))
                 self.message_text_ctrl.AppendText(result)
-    
-    
+                
+
+class LogsFrame(wx.Frame):
+    def __init__(self, parent, id, title, logs):
+        wx.Frame.__init__(self, parent, id, title)
+        self.logs_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE | wx.TE_READONLY)
+        self.logs_text_ctrl.SetFont(wx.Font(16, wx.MODERN, wx.NORMAL, wx.BOLD, 0, "Noto Sans CJK SC"))
+        self.logs_text_ctrl.AppendText(logs.decode("utf-8"))
+        self.logs_text_ctrl.SetMinSize((800, 530))
+        self.SetSize((800, 530))
+        self.Show()

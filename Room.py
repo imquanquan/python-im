@@ -45,6 +45,7 @@ class Room(CommandHandler):
         
     def broadcast(self, line):
         for session in self.sessions:
+            self.room_server.chat_logs = self.room_server.chat_logs + line.encode("utf-8")
             session.push(line.encode("utf-8"))    
     
     # def do_logout(self, session, line):
@@ -58,7 +59,6 @@ class ChatRoom(Room):
         session.push(b'Enter Success')
     
     def do_say(self, session, line):
-        print(line)
         self.broadcast(session.name + ': ' + line + '\n')    
      
     def do_check(self, session, name):
@@ -68,6 +68,10 @@ class ChatRoom(Room):
             session.name = name
             self.room_server.users[session.name] = session
             session.push(b'Check success')
+            
+    def do_logs(self, session, line):
+        print(line)
+        session.push(self.room_server.chat_logs)
     
     
 class LogoutRoom(Room):
@@ -124,6 +128,7 @@ class RoomServer(dispatcher):
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.bind(('', port))
         self.listen(5)
+        self.chat_logs = b''
         self.main_room = ChatRoom(self)
         self.users = {}     
                
