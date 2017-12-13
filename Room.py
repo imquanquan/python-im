@@ -9,24 +9,22 @@ import socket, asyncore
 class EndSession(Exception):
     pass
 
+
 class CommandHandler:
     #def unknown(self, session, cmd):
     #    session.push('Unknown command: %s\n'.encode('utf-8') % cmd)
 
     def handle(self, session, line):
-        print(line)
         if not line.strip():
             return
-        parts = line.split(' ', 1)
-        cmd = parts[0]
+        parts = line.split(b' ', 1)
+        cmd = parts[0].decode("utf-8")
         try:
             line = parts[1].strip()
         except IndexError:
             line = ''
-        print('do_' + cmd)
         method = getattr(self, 'do_' + cmd, None)
         #try:
-        print(method)
         method(session, line)
         #except TypeError:
         #    self.unknown(session, cmd)
@@ -45,8 +43,7 @@ class Room(CommandHandler):
         
     def broadcast(self, line):
         for session in self.sessions:
-            self.room_server.chat_logs = self.room_server.chat_logs + line.encode("utf-8")
-            session.push(line.encode("utf-8"))    
+            session.push(line)    
     
     # def do_logout(self, session, line):
         # raise EndSession 
@@ -59,21 +56,17 @@ class ChatRoom(Room):
         session.push(b'Enter Success')
     
     def do_say(self, session, line):
-        self.broadcast(session.name + ': ' + line + '\n')    
+        self.broadcast(session.name + b': ' + line + b'\n')    
      
     def do_check(self, session, name):
-        if name not in self.room_server.users_list:
+        if name.decode("utf-8") not in self.room_server.users_list:
             session.handle_close()
         else:
             session.name = name
             self.room_server.users[session.name] = session
             session.push(b'Check success')
             
-    def do_logs(self, session, line):
-        print(line)
-        session.push(self.room_server.chat_logs)
-    
-    
+      
 class LogoutRoom(Room):
     def add_session(self, session):
         try:
@@ -107,8 +100,7 @@ class RoomSession(async_chat):
     def found_terminator(self):
         buffer = b"".join(self.ibuffer)
         self.ibuffer = []
-        line = buffer.decode('utf-8')
-        print(line)
+        line = buffer
         try:
             self.room.handle(self, line)
         except EndSession:
@@ -128,7 +120,6 @@ class RoomServer(dispatcher):
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.bind(('', port))
         self.listen(5)
-        self.chat_logs = b''
         self.main_room = ChatRoom(self)
         self.users = {}     
                

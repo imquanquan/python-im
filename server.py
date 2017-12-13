@@ -6,21 +6,7 @@ from threading import Thread
 import socket, asyncore
 
 from Room import *
-
-
-class Channel(CommandHandler):
-    def __init__(self, server):
-        self.server = server
-        self.sessions = []
-    
-    def add_session(self, session):
-        self.sessions.append(session)
-        
-    def remove_session(self, session):
-        self.sessions.remove(session)    
-    
-    def do_logout(self, session, line):
-        raise EndSession 
+from FileServer import *
 
 
 class LoginChannel(Channel):
@@ -29,8 +15,6 @@ class LoginChannel(Channel):
         session.push(b'Connect Success')
     
     def do_login(self, session, name):
-        print(self.server.users)
-        name = name.encode('utf-8')
         if not name:
             session.push(b'The name can not be blank')
         elif name in self.server.users:
@@ -51,6 +35,7 @@ class ListChannel(Channel):
         session.push(users)
     
     def do_chat(self, session, chat_with):
+        chat_with = chat_with.decode("utf-8")
         chat_users = tuple(set(chat_with.split(' ')))
         if chat_users in self.server.rooms.keys():
             session.push(str(self.server.rooms[chat_users].port).encode("utf-8"))
@@ -59,15 +44,7 @@ class ListChannel(Channel):
             self.server.room_count += 1
             self.server.rooms[chat_users] = RoomServer(self.server, port, chat_users)
             session.push(str(port).encode("utf-8"))
-            
-
-class LogoutChannel(Channel):
-    def add_session(self, session):
-        try:
-            del self.server.users[session.name]
-        except KeyError:
-            pass
-        
+                        
 
 class ChatSession(async_chat):
     def __init__(self, server, sock):
@@ -94,8 +71,7 @@ class ChatSession(async_chat):
     def found_terminator(self):
         buffer = b"".join(self.ibuffer)
         self.ibuffer = []
-        line = buffer.decode('utf-8')
-        print(line)
+        line = buffer
         try:
             self.channel.handle(self, line)
         except EndSession:
@@ -127,6 +103,7 @@ class ChatServer(dispatcher):
 
 if __name__ == '__main__':
     s = ChatServer(6666)
+    f = FileServer(6667)
     #a = Thread(target=asyncore.loop)
     #a.start()
     try:

@@ -4,6 +4,7 @@ import gettext
 import telnetlib
 from threading import Thread
 from time import sleep
+from os.path import basename
 
 from wx.lib.pubsub import setupkwargs
 from wx.lib.pubsub import pub
@@ -12,6 +13,7 @@ import wx
 
 
 CON = telnetlib.Telnet()
+FILE_CON = telnetlib.Telnet()
 
 
 def receive_users_list_thread():
@@ -21,8 +23,9 @@ def receive_users_list_thread():
         users = CON.read_some().decode("utf-8").split(' ')
         wx.CallAfter(pub.sendMessage, "LIST_USERS", users_list = users, pre_users_list = pre_users)
         pre_users = users[:]
-        sleep(100)        
-        
+        sleep(0.5)      
+
+
 class ChatButton(wx.Button):
     def __init__(self, parent, id, Label, user):
         wx.Button.__init__(self, parent, id, Label)
@@ -49,6 +52,7 @@ class LoginFrame(wx.Frame):
         user_name = str(self.user_name_text.GetLineText(0))
             
         CON.open(server_address[0], port = int(server_address[1]), timeout = 10)
+        FILE_CON.open(server_address[0], port = 6667, timeout = 10)
         response = CON.read_some()
         if response != b'Connect Success':
             self.showDialog('Connect Fail!', (135, 50))
@@ -56,7 +60,10 @@ class LoginFrame(wx.Frame):
             
         mess = 'login ' + user_name + '\n'
         CON.write(mess.encode('utf-8'))
+        mess = 'login ' + user_name + 'EOFEOFEOFEOF'
+        FILE_CON.write(mess.encode('utf-8'))
         response = CON.read_some()
+
         if response == b'The name can not be blank':
             self.showDialog('名字不能为空哦', (175, 50))
         elif response == b'The name already exists':
@@ -86,10 +93,12 @@ class ListFrame(wx.Frame):
         
         self.__set_properties()
         self.__do_layout()
+        
         pub.subscribe(self.list_users, "LIST_USERS")
         
-        receive_thread = Thread(target=receive_users_list_thread)
-        receive_thread.start()
+        receive_list_thread = Thread(target=receive_users_list_thread)
+        receive_list_thread.start()
+        
         
         self.Center()    
         self.Show()    
@@ -146,17 +155,11 @@ class ListFrame(wx.Frame):
             self.cons[two].write(b'check %s\n' % self.owner.encode("utf-8"))
             response = self.cons[two].read_some()
             if response == b'Check success':
-                ChatFrame(self, wx.ID_ANY, "Chat with %s" % two, self.cons[two], two)
+                ChatFrame(self, wx.ID_ANY, "Chat with %s" % two, self.cons[two], self.owner, two)
     
-    def receive(self):
-        while True:
-            result = CON.read_some()
-            print(result)
-            sleep(0.6)
-
-
+        
 class ChatFrame(wx.Frame):
-    def __init__(self, parent, id, title, con, other):
+    def __init__(self, parent, id, title, con, owner, other):
         wx.Frame.__init__(self, parent, id, title)
         self.message_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE | wx.TE_READONLY)
         self.sen_text_ctrl = wx.TextCtrl(self, wx.ID_ANY, "", style = wx.TE_MULTILINE)
@@ -166,9 +169,16 @@ class ChatFrame(wx.Frame):
         
         self.send_button.Bind(wx.EVT_BUTTON, self.send)
         self.mess_button.Bind(wx.EVT_BUTTON, self.logs)
+        self.file_button.Bind(wx.EVT_BUTTON, self.send_file)
         
         self.con = con
         self.other = other
+        self.owner = owner
+        
+        pub.subscribe(self.receive_file, "RECEIVE_FILE")
+        
+        receive_file_thread = Thread(target=self.receive_file_thread)
+        receive_file_thread.start()        
         
         self.receive_thread = Thread(target=self.receive)
         self.receive_thread.start()
@@ -205,22 +215,61 @@ class ChatFrame(wx.Frame):
     
     def send(self, event):
         message = 'say ' + str(self.sen_text_ctrl.GetLineText(0)).strip() + '\n'
-        if message:
+        if message != 'say \n':
             self.con.write(message.encode("utf-8"))
             self.sen_text_ctrl.Clear()
     
     def logs(self, event):
-        self.con.write(b'logs\n')
-        response = self.con.read_some()
-        LogsFrame(self, wx.ID_ANY, "chat logs with %s" % self.other, response)
-            
+        with open(self.other, 'rb') as logs_file:
+            logs = logs_file.read()
+        LogsFrame(self, wx.ID_ANY, "chat logs with %s" % self.other, logs)
+    
+    def send_file(self, event):    
+        with wx.FileDialog(self, "Select File", wildcard="All File|*",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() == wx.ID_CANCEL:
+                return    
+            file_path = fileDialog.GetPath()        
+        
+        with open(file_path, 'rb') as f:
+            file_byte = f.read()
+        
+        line = 'send_file %s %s %s ' % (self.owner, self.other, basename(file_path))
+        print(line)
+        FILE_CON.write(line.encode("utf-8") + file_byte + b'EOFEOFEOFEOF')
+
     def receive(self):
         while True:
-            sleep(0.6)
+            sleep(0.3)
             result = self.con.read_very_eager()
             if result != b'':
-                print(result.decode("utf-8"))
+                with open(self.other, 'ab') as logs_file:
+                    logs_file.write(result)
                 self.message_text_ctrl.AppendText(result)
+                
+    def receive_file_thread(self):
+        while 1:
+            result = FILE_CON.read_very_eager()
+            if result != b'':
+                wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", response = result)
+                sleep(1)
+    
+    def receive_file(self, response):
+        response = response.split(b' ', 3)     
+        print(response)
+        with wx.MessageDialog(self, "是否接受来自 %s 的 %s 文件" % (response[1].decode("utf-8"), response[2].decode("utf-8")), "receive_file",
+                              wx.YES_NO) as dlg:
+            if dlg.ShowModal() == wx.ID_YES:
+                with wx.FileDialog(self, "Save file", wildcard="All File|*",
+                                       style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+                    if fileDialog.ShowModal() == wx.ID_CANCEL:
+                        return     
+                    save_name = fileDialog.GetPath()
+                print(save_name)
+                with open(save_name, 'wb') as f:
+                    f.write(response[3])    
+            else:      
+                pass    
                 
 
 class LogsFrame(wx.Frame):
