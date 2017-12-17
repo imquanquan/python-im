@@ -8,6 +8,23 @@ import socket, asyncore
 
 from Room import CommandHandler, EndSession
      
+
+class Channel(CommandHandler):
+    def __init__(self, server):
+        self.server = server
+        self.sessions = []
+    
+    def add_session(self, session):
+        self.sessions.append(session)
+        
+    def remove_session(self, session):
+        self.sessions.remove(session)    
+    
+    def do_logout(self, session, line):
+        raise EndSession 
+
+
+        
                     
 class FileSession:
     def __init__(self, server, sock):
