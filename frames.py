@@ -230,11 +230,13 @@ class ChatFrame(wx.Frame):
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return    
             file_path = fileDialog.GetPath()        
-        
-        line = 'send %s %s' % (self.other, basename(file_path))
+        with open(file_path, 'rb') as f:
+            file_size = len(f.read())  
+        print(file_size)  
+        line = 'send %s %s %s' % (self.other, str(file_size), basename(file_path))
         print(line)
-        FILE_SOCKET.send(line.encode("utf-8"))
-        i = 0       
+        FILE_SOCKET.send(line.encode("utf-8"))    
+        i = 0
         with open(file_path, 'rb') as f:
             l = f.read(1024)
             flag = 1
@@ -271,7 +273,7 @@ class ChatFrame(wx.Frame):
                                        
                     file_byte += data
                     if len(file_byte) == file_size:
-                        break     
+                        break                     
                 
                 wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", name = name, file_name = file_name, file_byte = file_byte)
                 
