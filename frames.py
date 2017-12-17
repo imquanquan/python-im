@@ -2,6 +2,7 @@
 
 import gettext
 import telnetlib
+import socket
 from threading import Thread
 from time import sleep
 from os.path import basename
@@ -13,7 +14,7 @@ import wx
 
 
 CON = telnetlib.Telnet()
-FILE_CON = telnetlib.Telnet()
+FILE_SOCKET = socket.socket()  
 
 
 def receive_users_list_thread():
@@ -52,7 +53,7 @@ class LoginFrame(wx.Frame):
         user_name = str(self.user_name_text.GetLineText(0))
             
         CON.open(server_address[0], port = int(server_address[1]), timeout = 10)
-        FILE_CON.open(server_address[0], port = 6667, timeout = 10)
+        FILE_SOCKET.connect((server_address[0], 6667))
         response = CON.read_some()
         if response != b'Connect Success':
             self.showDialog('Connect Fail!', (135, 50))
@@ -60,8 +61,7 @@ class LoginFrame(wx.Frame):
             
         mess = 'login ' + user_name + '\n'
         CON.write(mess.encode('utf-8'))
-        mess = 'login ' + user_name + 'EOFEOFEOFEOF'
-        FILE_CON.write(mess.encode('utf-8'))
+        FILE_SOCKET.send(b'name ' + user_name.encode('utf-8'))
         response = CON.read_some()
 
         if response == b'The name can not be blank':
@@ -231,13 +231,23 @@ class ChatFrame(wx.Frame):
                 return    
             file_path = fileDialog.GetPath()        
         
-        with open(file_path, 'rb') as f:
-            file_byte = f.read()
-        
-        line = 'send_file %s %s %s ' % (self.owner, self.other, basename(file_path))
+        line = 'send %s %s' % (self.other, basename(file_path))
         print(line)
-        FILE_CON.write(line.encode("utf-8") + file_byte + b'EOFEOFEOFEOF')
-
+        FILE_SOCKET.send(line.encode("utf-8"))
+        i = 0       
+        with open(file_path, 'rb') as f:
+            l = f.read(1024)
+            flag = 1
+            while (l):
+                FILE_SOCKET.send(l)
+                i += len(l)
+                l = f.read(1024)
+                if len(l) != 1024:
+                    flag = 0
+            if flag:
+                FILE_SOCKET.send(b' ')
+        print(i)
+                
     def receive(self):
         while True:
             sleep(0.3)
@@ -249,25 +259,35 @@ class ChatFrame(wx.Frame):
                 
     def receive_file_thread(self):
         while 1:
-            result = FILE_CON.read_very_eager()
-            if result != b'':
-                wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", response = result)
-                sleep(1)
+            result = FILE_SOCKET.recv(1024)
+            if result[:4] == b'recv':
+                print(result)
+                recv, name, file_size, file_name = result.split(b' ', 3)
+                file_size = int(file_size.decode("utf-8"))
+                print(file_size)
+                file_byte = b''
+                while True:
+                    data = FILE_SOCKET.recv(1024)
+                                       
+                    file_byte += data
+                    if len(file_byte) == file_size:
+                        break     
+                
+                wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", name = name, file_name = file_name, file_byte = file_byte)
+                
+                
     
-    def receive_file(self, response):
-        response = response.split(b' ', 3)     
-        print(response)
-        with wx.MessageDialog(self, "是否接受来自 %s 的 %s 文件" % (response[1].decode("utf-8"), response[2].decode("utf-8")), "receive_file",
+    def receive_file(self, name, file_name, file_byte):
+        with wx.MessageDialog(self, "是否接受来自 %s 的 %s 文件" % (name.decode('utf-8'), file_name.decode('utf-8')), "receive_file",
                               wx.YES_NO) as dlg:
             if dlg.ShowModal() == wx.ID_YES:
-                with wx.FileDialog(self, "Save file", wildcard="All File|*",
+                with wx.DirDialog(self, "Save file",
                                        style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
                     if fileDialog.ShowModal() == wx.ID_CANCEL:
                         return     
                     save_name = fileDialog.GetPath()
-                print(save_name)
-                with open(save_name, 'wb') as f:
-                    f.write(response[3])    
+                with open(save_name + '/' + file_name.decode('utf-8'), 'wb') as f:
+                    f.write(file_byte)    
             else:      
                 pass    
                 
