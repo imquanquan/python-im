@@ -278,8 +278,6 @@ class ChatFrame(wx.Frame):
                 file_size = int(file_size.decode("utf-8"))
                 print(file_size)
                 file_byte = b''
-
-                FILE_SOCKET.send(b'ok')
                 
                 while True:
                     data = FILE_SOCKET.recv(1024)                  
