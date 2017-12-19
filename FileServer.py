@@ -46,7 +46,7 @@ class FileSession:
             file_size = len(f.read())        
         self.server.users[name].socket.send(b'recv ' + name + b' ' + str(file_size).encode('utf-8') + b' ' + file_name)
         print(b'recv ' + name + b' ' + str(file_size).encode('utf-8') + b' ' + file_name)
-        response = self.socket.recv(1024)
+        response = self.server.users[name].socket.recv(1024)
         print(response)
         if response == b'ok':        
             i = 0
