@@ -5,7 +5,7 @@ import telnetlib
 import socket
 from threading import Thread
 from time import sleep
-from os.path import basename
+from os.path import basename,getsize
 
 from wx.lib.pubsub import setupkwargs
 from wx.lib.pubsub import pub
@@ -166,6 +166,7 @@ class ChatFrame(wx.Frame):
         self.send_button = wx.Button(self, wx.ID_ANY, "发送信息")
         self.mess_button = wx.Button(self, wx.ID_ANY, "聊天记录")
         self.file_button = wx.Button(self, wx.ID_ANY, "传送文件")
+        self.gauge = wx.Gauge(self, size = (780,30))
         
         self.send_button.Bind(wx.EVT_BUTTON, self.send)
         self.mess_button.Bind(wx.EVT_BUTTON, self.logs)
@@ -176,6 +177,7 @@ class ChatFrame(wx.Frame):
         self.owner = owner
         
         pub.subscribe(self.receive_file, "RECEIVE_FILE")
+        pub.subscribe(self.reflash, "REFLASH")
         
         receive_file_thread = Thread(target=self.receive_file_thread)
         receive_file_thread.start()        
@@ -189,7 +191,7 @@ class ChatFrame(wx.Frame):
         # self.receive()
 
     def __set_properties(self):
-        self.SetSize((800, 530))
+        self.SetSize((800, 560))
         self.message_text_ctrl.SetMinSize((800, 300))
         self.sen_text_ctrl.SetMinSize((800, 150))
         self.send_button.SetMinSize((200, 45))
@@ -210,6 +212,10 @@ class ChatFrame(wx.Frame):
         buttoms_sizer.Add(self.mess_button, 0, 0, 0)
         buttoms_sizer.Add(self.file_button, 0, 0, 0)
         main_sizer.Add(buttoms_sizer, 1, 0, 0)
+        main_sizer.Add(self.gauge, 0, 0, 0)     
+        self.gauge.SetRange(100)
+        self.gauge.SetBezelFace(3)
+        self.gauge.SetShadowWidth(3)        
         self.SetSizer(main_sizer)
         self.Layout()
     
@@ -232,24 +238,28 @@ class ChatFrame(wx.Frame):
             file_path = fileDialog.GetPath()        
         with open(file_path, 'rb') as f:
             file_size = len(f.read())  
-        print(file_size)  
+        
         line = 'send %s %s %s' % (self.other, str(file_size), basename(file_path))
         print(line)
         FILE_SOCKET.send(line.encode("utf-8"))    
-        i = 0
-        with open(file_path, 'rb') as f:
-            l = f.read(1024)
-            flag = 1
-            while (l):
-                FILE_SOCKET.send(l)
-                i += len(l)
+        
+        def do_send_file(file_path, file_size):
+            i = 0
+            with open(file_path, 'rb') as f:
                 l = f.read(1024)
-                if len(l) != 1024:
-                    flag = 0
-            if flag:
-                FILE_SOCKET.send(b' ')
-        print(i)
-                
+                while (l):
+                    FILE_SOCKET.send(l)
+                    i += len(l)
+                    value = i / file_size * 100
+                    wx.CallAfter(pub.sendMessage, "REFLASH", value = value)
+                    l = f.read(1024)
+            print('sent')
+        send_thread = Thread(target = do_send_file, args = (file_path, file_size)) 
+        send_thread.start()
+    
+    def reflash(self, value):
+        self.gauge.SetValue(value)
+         
     def receive(self):
         while True:
             sleep(0.3)
@@ -268,18 +278,19 @@ class ChatFrame(wx.Frame):
                 file_size = int(file_size.decode("utf-8"))
                 print(file_size)
                 file_byte = b''
+
+                FILE_SOCKET.send(b'ok')
+                
                 while True:
-                    data = FILE_SOCKET.recv(1024)
-                                       
+                    data = FILE_SOCKET.recv(1024)                  
                     file_byte += data
+                    value = len(file_byte) / file_size *100
+                    print(len(file_byte))
                     if len(file_byte) == file_size:
-                        break                     
-                
-                wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", name = name, file_name = file_name, file_byte = file_byte)
-                
-                
-    
-    def receive_file(self, name, file_name, file_byte):
+                        break                 
+                wx.CallAfter(pub.sendMessage, "RECEIVE_FILE", name = name, file_name = file_name, file_size = file_size, file_byte = file_byte)
+                                    
+    def receive_file(self, name, file_name, file_size, file_byte):
         with wx.MessageDialog(self, "是否接受来自 %s 的 %s 文件" % (name.decode('utf-8'), file_name.decode('utf-8')), "receive_file",
                               wx.YES_NO) as dlg:
             if dlg.ShowModal() == wx.ID_YES:
@@ -289,7 +300,9 @@ class ChatFrame(wx.Frame):
                         return     
                     save_name = fileDialog.GetPath()
                 with open(save_name + '/' + file_name.decode('utf-8'), 'wb') as f:
-                    f.write(file_byte)    
+                    f.write(file_byte)  
+                
+                 
             else:      
                 pass    
                 
@@ -303,3 +316,4 @@ class LogsFrame(wx.Frame):
         self.logs_text_ctrl.SetMinSize((800, 530))
         self.SetSize((800, 530))
         self.Show()
+    

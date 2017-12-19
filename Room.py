@@ -39,7 +39,10 @@ class Room(CommandHandler):
         self.sessions.append(session)
         
     def remove_session(self, session):
-        self.sessions.remove(session)    
+        try:
+            self.sessions.remove(session)  
+        except ValueError:
+            pass  
         
     def broadcast(self, line):
         for session in self.sessions:

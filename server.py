@@ -9,6 +9,23 @@ from Room import *
 from FileServer import *
 
 
+class Channel(CommandHandler):
+    def __init__(self, server):
+        self.server = server
+        self.sessions = []
+    
+    def add_session(self, session):
+        self.sessions.append(session)
+        
+    def remove_session(self, session):
+        try:
+            self.sessions.remove(session)  
+        except ValueError:
+            pass
+    
+    def do_logout(self, session, line):
+        raise EndSession 
+
 class LoginChannel(Channel):
     def add_session(self, session):
         Channel.add_session(self, session)
@@ -44,6 +61,13 @@ class ListChannel(Channel):
             self.server.room_count += 1
             self.server.rooms[chat_users] = RoomServer(self.server, port, chat_users)
             session.push(str(port).encode("utf-8"))
+            
+class LogoutChannel(Channel):
+    def add_session(self, session):
+        try:
+            del self.server.users[session.name]
+        except KeyError:
+            pass    
                         
 
 class ChatSession(async_chat):
